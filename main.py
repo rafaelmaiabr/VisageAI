@@ -5,10 +5,56 @@ import numpy as np
 import time
 import mss
 import mss.tools
+from PIL import Image, ImageDraw, ImageFont
+import os
 
 # Variáveis globais
 selected_region = None  # Armazena a região selecionada
 active_monitor = 1      # Monitor ativo para captura
+
+# Cores para cada emoção (em BGR)
+EMOTION_COLORS = {
+    'Raiva': (0, 0, 255),     # Vermelho
+    'Nojo': (0, 140, 0),      # Verde escuro
+    'Medo': (128, 0, 128),    # Roxo
+    'Feliz': (0, 255, 255),   # Amarelo
+    'Triste': (139, 69, 19),  # Marrom
+    'Surpreso': (255, 140, 0), # Azul claro
+    'Neutro': (128, 128, 128)  # Cinza
+}
+
+# Emojis para cada emoção (voltando para Unicode)
+EMOTION_EMOJIS = {
+    'Raiva': '😠',
+    'Nojo': '🤢',
+    'Medo': '😨',
+    'Feliz': '😊',
+    'Triste': '😢',
+    'Surpreso': '😮',
+    'Neutro': '😐'
+}
+
+# Define o caminho para uma fonte que suporta emojis
+try:
+    # Tenta encontrar a fonte Segoe UI Emoji no Windows
+    if os.path.exists("C:/Windows/Fonts/seguiemj.ttf"):
+        EMOJI_FONT_PATH = "C:/Windows/Fonts/seguiemj.ttf"
+    else:
+        EMOJI_FONT_PATH = None
+        print("Fonte de emoji não encontrada, usando símbolos ASCII")
+        # Volta para símbolos ASCII se não encontrar a fonte
+        EMOTION_EMOJIS = {
+            'Raiva': '>:(',
+            'Nojo': ':P',
+            'Medo': ':O',
+            'Feliz': ':)',
+            'Triste': ':(',
+            'Surpreso': ':o',
+            'Neutro': ':|'
+        }
+except Exception as e:
+    print(f"Erro ao configurar fonte: {e}")
+    EMOJI_FONT_PATH = None
 
 # Dicionário de tradução para as emoções
 TRADUCOES = {
@@ -133,6 +179,65 @@ def analyze_emotion(frame):
         print(f"Erro na análise de emoção: {str(e)}")
         return None, None
 
+def draw_emotion_bars(frame, emotion_scores, start_y=60, max_width=200):
+    """
+    Desenha barras de porcentagem para cada emoção com cores específicas
+    """
+    bar_height = 15
+    gap = 5
+    
+    # Ordena as emoções por score
+    sorted_emotions = sorted(emotion_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    for i, (emotion, score) in enumerate(sorted_emotions):
+        y = start_y + i * (bar_height + gap)
+        
+        # Desenha o fundo da barra (cinza)
+        cv2.rectangle(frame, (10, y), (10 + max_width, y + bar_height), (64, 64, 64), -1)
+        
+        # Desenha a barra de progresso com a cor da emoção
+        width = int(max_width * score / 100)
+        color = EMOTION_COLORS[emotion]
+        cv2.rectangle(frame, (10, y), (10 + width, y + bar_height), color, -1)
+        
+        # Adiciona texto com emoji e porcentagem usando PIL
+        text = f"{EMOTION_EMOJIS[emotion]} {emotion}: {score:.1f}%"
+        frame = draw_text_with_emoji(frame, text, 
+                                   (15 + max_width, y + bar_height - 12),
+                                   font_size=16,
+                                   color=(255, 255, 255))
+
+def draw_border(frame, color, thickness=15):
+    """
+    Desenha uma borda colorida ao redor do frame
+    """
+    h, w = frame.shape[:2]
+    cv2.rectangle(frame, (0, 0), (w, h), color, thickness)
+
+def draw_text_with_emoji(img, text, position, font_size=32, color=(255, 255, 255), thickness=1):
+    """
+    Desenha texto com emoji usando PIL
+    """
+    # Converte a imagem OpenCV para PIL
+    img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(img_pil)
+    
+    if EMOJI_FONT_PATH:
+        try:
+            # Usa a fonte de emoji
+            font = ImageFont.truetype(EMOJI_FONT_PATH, font_size)
+            draw.text(position, text, font=font, fill=color[::-1])  # Inverte BGR para RGB
+            
+            # Converte de volta para OpenCV
+            return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            print(f"Erro ao renderizar emoji: {e}")
+            
+    # Se falhar ou não tiver fonte, usa o OpenCV padrão
+    cv2.putText(img, text, position, cv2.FONT_HERSHEY_SIMPLEX, 
+                font_size/32, color, thickness)
+    return img
+
 def main():
     global selected_region, active_monitor  # Declarando acesso às variáveis globais
     
@@ -209,23 +314,32 @@ def main():
                         last_emotion_time = time.time()
 
             # Adiciona texto com a emoção atual
-            cv2.putText(frame, f"Emoção: {current_emotion}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # cv2.putText(frame, f"Emoção: {current_emotion}", (10, 30),
+            #             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # Se tiver scores de emoção, mostra eles
+            if emotion_scores:
+                # Converte scores para porcentagem
+                total = sum(emotion_scores.values())
+                emotion_percentages = {k: (v/total)*100 for k, v in emotion_scores.items()}
+                
+                # Desenha as barras de emoção
+                draw_emotion_bars(frame, emotion_percentages)
+                
+                # Desenha a borda com a cor da emoção dominante
+                draw_border(frame, EMOTION_COLORS[current_emotion])                # Mostra a emoção dominante com emoji
+                emotion_text = f"{EMOTION_EMOJIS[current_emotion]} {current_emotion}"
+                frame = draw_text_with_emoji(frame, emotion_text, 
+                                           (10, 40), 
+                                           font_size=32,
+                                           color=EMOTION_COLORS[current_emotion],
+                                           thickness=2)
 
             # Mostra o modo atual
             modo_texto = "Webcam" if using_webcam else f"Captura de Tela (Monitor {active_monitor})"
             modo_texto += " (Região Selecionada)" if selected_region else ""
             cv2.putText(frame, f"Modo: {modo_texto}", (10, frame.shape[0] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            # Se tiver scores de emoção, mostra eles
-            if emotion_scores:
-                y_pos = 60
-                for emotion, score in emotion_scores.items():
-                    text = f"{emotion}: {score:.2f}"
-                    cv2.putText(frame, text, (10, y_pos),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    y_pos += 20
 
             # Mostra o frame
             cv2.imshow('Analise de Sentimento em Tempo Real', frame)

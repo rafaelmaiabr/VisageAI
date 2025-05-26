@@ -6,3 +6,4 @@ mediapipe>=0.8.0
 deepface>=0.0.75
 mss>=6.1.0
 tf-keras>=2.19.0
+Pillow >=11.2.1
